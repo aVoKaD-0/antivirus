@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+pydantic
+requests
+jinja2
+shutil
+os
+uuid
+json
+datetime
+typing
+mashina
+asyncio
+subprocess

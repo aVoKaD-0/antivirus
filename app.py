@@ -3,18 +3,32 @@ from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 import shutil
 import os
-import subprocess
 import uuid
 import json
 from datetime import datetime
-from pathlib import Path
 from typing import Dict, List
-import docker
+from mashina import start_vm
+import asyncio
 
 app = FastAPI()
-client = docker.from_env()  # Инициализация Docker клиента
+
+class AnalysisResult(BaseModel):
+    analysis_id: str
+    result_data: dict
+
+@app.post("/submit-result/")
+async def submit_result(result: AnalysisResult):
+    try:
+        # Обработка и сохранение данных
+        os.makedirs("results", exist_ok=True)  # Убедитесь, что папка создается
+        with open(f"results/{result.analysis_id}.json", "w") as file:
+            json.dump(result.result_data, file)
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # Настраиваем CORS
 app.add_middleware(
@@ -28,6 +42,7 @@ app.add_middleware(
 # Создаем необходимые директории, если их нет
 os.makedirs("uploads", exist_ok=True)
 os.makedirs("data", exist_ok=True)  # Новая папка для данных
+os.makedirs("results", exist_ok=True)  # Папка для результатов
 os.makedirs("static", exist_ok=True)
 os.makedirs("templates", exist_ok=True)
 os.makedirs("history", exist_ok=True)
@@ -40,32 +55,24 @@ templates = Jinja2Templates(directory="templates")
 # Хранилище активных анализов по пользователям
 active_analyses: Dict[str, Dict[str, List[str]]] = {}
 
-# Обновленный эндпоинт /analyze
 @app.post("/analyze")
-async def analyze_file(file: UploadFile = File(...)):
+async def analyze_file(request: Request, file: UploadFile = File(...)):
     try:
         # Сохранение файла
-        file_location = f"uploads/{file.filename}"
+        client_ip = get_client_ip(request)
+        user_upload_folder = os.path.join("uploads", client_ip)
+        os.makedirs(user_upload_folder, exist_ok=True)
+
+        file_location = os.path.join(user_upload_folder, file.filename)
         with open(file_location, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
-        
+
         # Генерация идентификатора анализа
         run_id = str(uuid.uuid4())
-        
-        # Запуск скрипта мониторинга
-        # cmd = [
-        #     "powershell",
-        #     "-ExecutionPolicy", "Bypass",
-        #     "-File", "C:/monitor.ps1",
-        #     "-ExePath", file_location,
-        #     "-RunId", run_id
-        # ]
-        # process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        # stdout, stderr = process.communicate()
-        
-        # if process.returncode != 0:
-        #     raise Exception(stderr.decode())
-        
+
+        # Запуск виртуальной машины асинхронно
+        asyncio.create_task(start_vm(run_id, file.filename))
+
         # Добавляем запись в историю
         history = load_user_history()
         history.append({
@@ -77,7 +84,7 @@ async def analyze_file(file: UploadFile = File(...)):
             "docker_output": ""
         })
         save_user_history(history)
-        
+
         return {"status": "success", "analysis_id": run_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -86,9 +93,9 @@ async def analyze_file(file: UploadFile = File(...)):
 async def root(request: Request):
     # Получаем историю пользователя
     history = load_user_history()
-    
+
     return templates.TemplateResponse(
-        "index.html", 
+        "index.html",
         {"request": request, "history": history}
     )
 
@@ -110,13 +117,13 @@ async def get_results(analysis_id: str):
         # Получаем историю
         history = load_user_history()
         item = None
-        
+
         # Ищем текущий анализ
         for entry in history:
             if entry["analysis_id"] == analysis_id:
                 item = entry
                 break
-                
+
         if not item:
             return JSONResponse({
                 "status": "error",
@@ -140,15 +147,15 @@ async def get_results(analysis_id: str):
 async def get_analysis_page(request: Request, analysis_id: str):
     try:
         history = load_user_history()
-        
+
         # Проверяем существование анализа
         analysis_exists = any(item["analysis_id"] == analysis_id for item in history)
         if not analysis_exists:
             # Если анализ не найден, перенаправляем на главную
             return RedirectResponse(url="/")
-        
+
         return templates.TemplateResponse(
-            "index.html", 
+            "index.html",
             {"request": request, "history": history}
         )
     except Exception as e:
@@ -170,7 +177,7 @@ async def stop_analysis(analysis_id: str):
                 item["status"] = "stopped"
                 break
         save_user_history(history)
-            
+
         return {"status": "success", "message": "Анализ остановлен"}
     except Exception as e:
         return JSONResponse({
@@ -178,35 +185,44 @@ async def stop_analysis(analysis_id: str):
             "message": str(e)
         }, status_code=404)
 
-@app.get("/containers/")
-async def list_containers():
-    try:
-        containers = client.containers.list(all=True)
-        return [
-            {
-                "run_id": container.name.replace("monitor-", ""),
-                "status": container.status,
-                "id": container.short_id
-            }
-            for container in containers
-            if container.name.startswith("monitor-")
-        ]
-    except Exception as e:
-        return JSONResponse({
-            "status": "error",
-            "message": str(e)
-        }, status_code=500)
+# @app.get("/containers/")
+# async def list_containers():
+#     try:
+#         # Если Docker не используется, удалите этот эндпоинт
+#         containers = client.containers.list(all=True)
+#         return [
+#             {
+#                 "run_id": container.name.replace("monitor-", ""),
+#                 "status": container.status,
+#                 "id": container.short_id
+#             }
+#             for container in containers
+#             if container.name.startswith("monitor-")
+#         ]
+#     except Exception as e:
+#         return JSONResponse({
+#             "status": "error",
+#             "message": str(e)
+#         }, status_code=500)
 
 def save_user_history(history: list):
     # Определяем путь к файлу истории
     history_dir = "history"
     os.makedirs(history_dir, exist_ok=True)
     history_file = os.path.join(history_dir, "history.json")
-    
+
     # Сохраняем историю в JSON файл
     with open(history_file, "w") as file:
         json.dump(history, file, indent=4)
 
+# Функция получения IP пользователя
+def get_client_ip(request: Request):
+    if request.headers.get('X-Forwarded-For'):
+        ip = request.headers.get('X-Forwarded-For').split(',')[0]
+    else:
+        ip = request.client.host
+    return ip
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8080) 
+    uvicorn.run(app, host="0.0.0.0", port=8080)
