@@ -93,6 +93,7 @@ async def start_vm(analysis_id, exe_filename, client_ip):
         # $credential = New-Object System.Management.Automation.PSCredential ("{username}", $secpasswd)
         # Invoke-Command -VMName "{analysis_id}" -Credential $credential -ScriptBlock {{
         #     winrm quickconfig -quiet -Force
+                Start-Process powershell.exe -Verb RunAs -ArgumentList "-NoProfile -Command `"winrm quickconfig`""
         # }}
         # """
         # subprocess.run(["powershell", "-Command", setup_winrm_command], check=True)
