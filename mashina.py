@@ -14,6 +14,9 @@ password = "docker"
    Register-ScheduledTask -TaskName "RunWinrmQuickconfig" -Action $action -Trigger $trigger -RunLevel Highest -Force
    Start-ScheduledTask -TaskName "RunWinrmQuickconfig"
 
+   schtasks.exe /Create /TN "RunWinrmQuickconfig" /TR "powershell.exe -NoProfile -Command \"winrm quickconfig -quiet\"" /SC ONCE /ST 12:00 /RL HIGHEST /F
+   schtasks.exe /Run /TN "RunWinrmQuickconfig"
+
 def send_result_to_server(analysis_id, result_data, success: bool):
     url = "http://localhost:8080/submit-result/"
     payload = {
