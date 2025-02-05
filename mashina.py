@@ -17,6 +17,8 @@ password = "docker"
    schtasks.exe /Create /TN "RunWinrmQuickconfig" /TR "powershell.exe -NoProfile -Command \"winrm quickconfig -quiet\"" /SC ONCE /ST 12:00 /RL HIGHEST /F
    schtasks.exe /Run /TN "RunWinrmQuickconfig"
 
+Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" -Name EnableLUA -Value 0
+
 def send_result_to_server(analysis_id, result_data, success: bool):
     url = "http://localhost:8080/submit-result/"
     payload = {
