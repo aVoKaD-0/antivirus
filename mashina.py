@@ -8,6 +8,7 @@ import time
 # Получение учетных данных пользователя
 username = "docker"
 password = "docker"
+# Start-Process powershell -Verb RunAs -ArgumentList "-NoProfile -Command `"Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name LocalAccountTokenFilterPolicy -Value 1 -Type DWord`""
 
 def send_result_to_server(analysis_id, result_data, success: bool):
     url = "http://localhost:8080/submit-result/"
