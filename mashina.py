@@ -9,6 +9,10 @@ import time
 username = "docker"
 password = "docker"
 # Start-Process powershell -Verb RunAs -ArgumentList "-NoProfile -Command `"Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name LocalAccountTokenFilterPolicy -Value 1 -Type DWord`""
+   $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -Command `"winrm quickconfig -quiet`""
+   $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(10)
+   Register-ScheduledTask -TaskName "RunWinrmQuickconfig" -Action $action -Trigger $trigger -RunLevel Highest -Force
+   Start-ScheduledTask -TaskName "RunWinrmQuickconfig"
 
 def send_result_to_server(analysis_id, result_data, success: bool):
     url = "http://localhost:8080/submit-result/"
