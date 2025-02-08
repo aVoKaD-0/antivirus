@@ -8,6 +8,7 @@ import time
 # Получение учетных данных пользователя
 username = "docker"
 password = "docker"
+Start-Process -Verb RunAs -FilePath $procmonPath -ArgumentList '/Terminate' -Wait
 # Start-Process powershell -Verb RunAs -ArgumentList "-NoProfile -Command `"Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name LocalAccountTokenFilterPolicy -Value 1 -Type DWord`""
    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -Command `"winrm quickconfig -quiet`""
    $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(10)
