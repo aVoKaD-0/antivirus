@@ -1,5 +1,5 @@
 from fastapi import FastAPI, UploadFile, File, Request, HTTPException
-from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Dict, List
 from mashina import start_vm
 import asyncio
+import ijson
 
 app = FastAPI()
 
@@ -22,10 +23,15 @@ class AnalysisResult(BaseModel):
 @app.post("/submit-result/")
 async def submit_result(result: AnalysisResult):
     try:
-        # Обработка и сохранение данных
-        os.makedirs("results", exist_ok=True)  # Убедитесь, что папка создается
-        with open(f"results/{result.analysis_id}.json", "w") as file:
-            json.dump(result.result_data, file)
+        # Опционально: обновляем статус анализа в истории,
+        # например, если в result_data передан новый статус.
+        history = load_user_history()
+        for entry in history:
+            if entry["analysis_id"] == result.analysis_id:
+                entry["status"] = result.result_data.get("status", "completed")
+                break
+        save_user_history(history)
+
         return {"status": "success"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -46,7 +52,6 @@ os.makedirs("results", exist_ok=True)  # Папка для результато�
 os.makedirs("static", exist_ok=True)
 os.makedirs("templates", exist_ok=True)
 os.makedirs("history", exist_ok=True)
-os.makedirs("logs", exist_ok=True)
 
 # Монтируем статические файлы
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -70,23 +75,36 @@ async def analyze_file(request: Request, file: UploadFile = File(...)):
         # Генерация идентификатора анализа
         run_id = str(uuid.uuid4())
 
-        # Запуск виртуальной машины асинхронно
-        asyncio.create_task(start_vm(run_id, file.filename))
+        # Запускаем виртуальную машину асинхронно
+        asyncio.create_task(asyncio.to_thread(start_vm, run_id, file.filename, client_ip))
 
-        # Добавляем запись в историю
+        # Обновляем историю: сохраняем только analysis_id, filename, timestamp и status.
         history = load_user_history()
         history.append({
             "analysis_id": run_id,
             "filename": file.filename,
             "timestamp": datetime.now().isoformat(),
-            "status": "running",
-            "file_activity": [],
-            "docker_output": ""
+            "status": "running"
         })
         save_user_history(history)
 
-        return {"status": "success", "analysis_id": run_id}
+        # Создаем пустую запись в results.json для хранения file_activity и docker_output.
+        os.makedirs(os.path.join("results", run_id), exist_ok=True)
+        results = load_user_results(run_id)
+        results[run_id] = {
+            "file_activity": [],
+            "docker_output": ""
+        }
+        save_user_results(results, run_id)
+
+        print(f"Файл загружен и анализ запущен. ID анализа: {run_id}")
+        
+        return JSONResponse({
+            "status": "success",
+            "analysis_id": run_id
+        })
     except Exception as e:
+        print(f"Ошибка при анализе файла: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/", response_class=HTMLResponse)
@@ -100,10 +118,11 @@ async def root(request: Request):
     )
 
 def load_user_history():
-    # Загрузка истории из файла
+    # Загрузка истории из файла с использованием кодировки utf-8-sig 
+    # для корректного распознавания BOM и избежания ошибок декодирования.
     history_file = "history/history.json"
     if os.path.exists(history_file):
-        with open(history_file, "r") as file:
+        with open(history_file, "r", encoding="utf-8-sig") as file:
             return json.load(file)
     return []
 
@@ -114,49 +133,80 @@ async def get_history():
 @app.get("/results/{analysis_id}")
 async def get_results(analysis_id: str):
     try:
-        # Получаем историю
         history = load_user_history()
-        item = None
+        analysis = next((item for item in history if item["analysis_id"] == analysis_id), None)
+        if not analysis:
+            return JSONResponse(status_code=404, content={"detail": "Анализ не найден"})
 
-        # Ищем текущий анализ
-        for entry in history:
-            if entry["analysis_id"] == analysis_id:
-                item = entry
-                break
-
-        if not item:
-            return JSONResponse({
-                "status": "error",
-                "message": "Анализ не найден"
-            }, status_code=404)
-
-        return {
-            "status": item["status"],
-            "file_activity": item.get("file_activity", []),
-            "docker_logs": item.get("docker_output", "")
+        results = load_user_results(analysis_id)
+        result_data = {
+            "file_activity": results.get("file_activity", []),
+            "docker_output": results.get("docker_output", "")
         }
-
-    except Exception as e:
-        print(f"Ошибка при получении результатов: {str(e)}")
+        
         return JSONResponse({
-            "status": "error",
-            "message": str(e)
-        }, status_code=404)
+            "status": analysis["status"],
+            "file_activity": result_data.get("file_activity", []),
+            "docker_output": result_data.get("docker_output", "")
+        })
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"detail": str(e)})
+
+@app.get("/results/{analysis_id}/chunk")
+async def get_results_chunk(analysis_id: str, offset: int = 0, limit: int = 50):
+    try:
+        # Определяем путь к файлу результатов.
+        # Предполагается, что результаты хранятся в файле data/{analysis_id}/results.json
+        results_file = os.path.join("results", analysis_id, "results.json")
+        if not os.path.exists(results_file):
+            return JSONResponse(status_code=404, content={"detail": "Результаты не найдены"})
+
+        chunk = []
+        total = 0
+
+        # Используем ijson для потокового парсинга ключа "file_activity", который должен быть массивом.
+        # Это означает, что структура JSON должна быть примерно такой:
+        # {
+        #     "file_activity": [ {...}, {...}, ... ],
+        #     "docker_output": "..."
+        # }
+        with open(results_file, "r", encoding="utf-8") as f:
+            parser = ijson.items(f, "file_activity.item")
+            for item in parser:
+                if total >= offset and len(chunk) < limit:
+                    chunk.append(item)
+                total += 1
+
+        return JSONResponse({
+            "chunk": chunk,
+            "offset": offset,
+            "limit": limit,
+            "total": total
+        })
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"detail": str(e)})
 
 @app.get("/analysis/{analysis_id}")
 async def get_analysis_page(request: Request, analysis_id: str):
     try:
         history = load_user_history()
-
-        # Проверяем существование анализа
-        analysis_exists = any(item["analysis_id"] == analysis_id for item in history)
-        if not analysis_exists:
-            # Если анализ не найден, перенаправляем на главную
+        analysis = next((item for item in history if item["analysis_id"] == analysis_id), None)
+        if not analysis:
             return RedirectResponse(url="/")
+
+        results = load_user_results(analysis_id)
+        result_data = results.get(analysis_id, {"file_activity": [], "docker_output": ""})
 
         return templates.TemplateResponse(
             "index.html",
-            {"request": request, "history": history}
+            {
+                "request": request,
+                "analysis_id": analysis_id,
+                "status": analysis["status"],
+                "file_activity": result_data.get("file_activity", []),
+                "docker_output": result_data.get("docker_output", ""),
+                "history": history
+            }
         )
     except Exception as e:
         print(f"Ошибка при получении страницы анализа: {str(e)}")
@@ -215,6 +265,27 @@ def save_user_history(history: list):
     with open(history_file, "w") as file:
         json.dump(history, file, indent=4)
 
+# Загружает историю анализов из файла history/history.json.
+def load_user_results(analysis_id: str):
+    """
+    Загружает результаты анализов из файла results/{analysis_id}/results.json.
+    Если файла нет, возвращается пустой словарь.
+    """
+    results_file = f"results/{analysis_id}/results.json"
+    if os.path.exists(results_file):
+        with open(results_file, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+# Сохраняет словарь результатов анализов в файл results/{analysis_id}/results.json.
+def save_user_results(results, analysis_id: str):
+    """
+    Сохраняет словарь результатов анализов в файл results/{analysis_id}/results.json.
+    """
+    results_file = f"results/{analysis_id}/results.json"
+    with open(results_file, "w", encoding="utf-8") as f:
+        json.dump(results, f, indent=4, ensure_ascii=False)
+
 # Функция получения IP пользователя
 def get_client_ip(request: Request):
     if request.headers.get('X-Forwarded-For'):
@@ -222,6 +293,37 @@ def get_client_ip(request: Request):
     else:
         ip = request.client.host
     return ip
+
+@app.get("/results/{analysis_id}/download")
+async def download_results(analysis_id: str):
+    # Определяем путь к файлу результатов (уже исправленное расположение)
+    results_file = os.path.join("results", analysis_id, "results.json")
+    if not os.path.exists(results_file):
+        return JSONResponse(status_code=404, content={"detail": "Результаты не найдены"})
+    return FileResponse(results_file, media_type='application/json', filename="results.json")
+
+@app.get("/download/{analysis_id}", response_class=HTMLResponse)
+async def download_page(request: Request, analysis_id: str):
+    # URL для скачивания файла
+    download_url = f"/results/{analysis_id}/download"
+    # Возвращаем простую HTML-страницу, которая через JavaScript перенаправляет пользователя на URL скачивания.
+    return f"""
+    <!DOCTYPE html>
+    <html lang="ru">
+    <head>
+        <meta charset="UTF-8">
+        <title>Начало загрузки</title>
+        <script>
+            window.onload = function() {{
+                window.location.href = "{download_url}";
+            }};
+        </script>
+    </head>
+    <body>
+        <p>Если загрузка не началась автоматически, нажмите <a href="{download_url}">здесь</a>.</p>
+    </body>
+    </html>
+    """
 
 if __name__ == "__main__":
     import uvicorn
