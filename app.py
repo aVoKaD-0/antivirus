@@ -255,6 +255,7 @@ async def stop_analysis(analysis_id: str):
 #             "message": str(e)
 #         }, status_code=500)
 
+# Сохраняет историю анализов в файл history/history.json.
 def save_user_history(history: list):
     # Определяем путь к файлу истории
     history_dir = "history"
