@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+pydantic
+requests
+jinja2
+sse_starlette
+ijson
+python-multipart
+filelock

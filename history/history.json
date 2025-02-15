@@ -1,0 +1,112 @@
+[
+    {
+        "analysis_id": "3127b358-7ce8-4578-903d-c513987c2e67",
+        "filename": "YChromeSetup.exe",
+        "timestamp": "2025-02-12T00:00:18.341998",
+        "status": "completed"
+    },
+    {
+        "analysis_id": "75789e7d-79b0-4052-bbda-ea217a27d8f5",
+        "filename": "YChromeSetup.exe",
+        "timestamp": "2025-02-13T01:18:45.248071",
+        "status": "error",
+        "file_activity": [],
+        "docker_output": "Command '['powershell', '-Command', '\\n        $secpasswd = ConvertTo-SecureString \"docker\" -AsPlainText -Force;\\n        $credential = New-Object System.Management.Automation.PSCredential (\"docker\", $secpasswd);\\n        $log_file_path = \"C:\\\\Users\\\\docker\\\\Desktop\\\\logs\\\\procmon.pml\";\\n        $logs_destination = \"C:\\\\Users\\\\a1010\\\\Desktop\\\\antivirus\\\\antivirus\\\\results\\\\75789e7d-79b0-4052-bbda-ea217a27d8f5\\\\procmon.pml\";\\n        $s = New-PSSession -VMName \"75789e7d-79b0-4052-bbda-ea217a27d8f5\" -Credential $credential;\\n        Copy-Item -Path \"$log_file_path\" -Destination \"$logs_destination\" -FromSession $s\\n        ']' returned non-zero exit status 1."
+    },
+    {
+        "analysis_id": "835ab4d1-3541-47a1-97f0-eb661b7dbab3",
+        "filename": "YChromeSetup.exe",
+        "timestamp": "2025-02-13T01:31:54.363636",
+        "status": "running"
+    },
+    {
+        "analysis_id": "719a5bf4-b7a0-43d8-9e65-51bb0ecabc19",
+        "filename": "YChromeSetup.exe",
+        "timestamp": "2025-02-13T01:37:38.533791",
+        "status": "completed"
+    },
+    {
+        "analysis_id": "565ff1f1-632e-41d4-950c-08d03168156c",
+        "filename": "YChromeSetup.exe",
+        "timestamp": "2025-02-13T01:50:59.821606",
+        "status": "running"
+    },
+    {
+        "analysis_id": "c86fbbc4-0909-4316-8295-0dbfe45c3028",
+        "filename": "YChromeSetup.exe",
+        "timestamp": "2025-02-13T02:07:01.966061",
+        "status": "completed"
+    },
+    {
+        "analysis_id": "fb42ab8e-72f0-493b-912f-9fe6fd1313e3",
+        "filename": "YChromeSetup.exe",
+        "timestamp": "2025-02-13T02:15:10.438508",
+        "status": "running"
+    },
+    {
+        "analysis_id": "c9e762a5-df4b-4387-adc8-2ab121be969d",
+        "filename": "YChromeSetup.exe",
+        "timestamp": "2025-02-13T02:29:30.213017",
+        "status": "running"
+    },
+    {
+        "analysis_id": "9f3aca9c-bed8-45a7-b6aa-6960cdd0acbe",
+        "filename": "YChromeSetup.exe",
+        "timestamp": "2025-02-13T02:37:44.545057",
+        "status": "completed"
+    },
+    {
+        "analysis_id": "eb4e6f97-0548-4e48-8446-6713c31f3410",
+        "filename": "YChromeSetup.exe",
+        "timestamp": "2025-02-13T13:39:13.663652",
+        "status": "completed"
+    },
+    {
+        "analysis_id": "a8621dd6-795f-4b24-b7e8-3692d91f3690",
+        "filename": "YChromeSetup.exe",
+        "timestamp": "2025-02-13T13:48:19.924971",
+        "status": "running"
+    },
+    {
+        "analysis_id": "8e0cbfdd-e2da-4496-8c9a-03ca80d12fa5",
+        "filename": "YChromeSetup.exe",
+        "timestamp": "2025-02-13T13:59:28.000486",
+        "status": "completed"
+    },
+    {
+        "analysis_id": "36223625-7cf4-4c06-892c-64454aa423fc",
+        "filename": "YChromeSetup.exe",
+        "timestamp": "2025-02-13T14:05:16.821252",
+        "status": "completed"
+    },
+    {
+        "analysis_id": "313e74bc-1e11-49ff-97b1-7f2c75c5c3cd",
+        "filename": "YChromeSetup.exe",
+        "timestamp": "2025-02-13T14:32:03.993285",
+        "status": "completed"
+    },
+    {
+        "analysis_id": "c46cb8f6-79c3-44b4-9cd3-5450bdcf4e35",
+        "filename": "YChromeSetup.exe",
+        "timestamp": "2025-02-13T14:40:07.817422",
+        "status": "completed"
+    },
+    {
+        "analysis_id": "fb0286ef-e80f-45c5-ab66-29650e0161aa",
+        "filename": "YChromeSetup.exe",
+        "timestamp": "2025-02-13T14:54:56.120273",
+        "status": "completed"
+    },
+    {
+        "analysis_id": "8fbc605c-8daa-4e70-8195-3606b9459166",
+        "filename": "YChromeSetup.exe",
+        "timestamp": "2025-02-13T15:23:48.023897",
+        "status": "completed"
+    },
+    {
+        "analysis_id": "81f98a31-7ef6-4ec4-8e31-4561cce78589",
+        "filename": "YChromeSetup.exe",
+        "timestamp": "2025-02-15T15:49:23.295838",
+        "status": "completed"
+    }
+]
