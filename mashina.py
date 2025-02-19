@@ -7,6 +7,9 @@ import time
 import csv
 from filelock import FileLock
 
+# Импортируем менеджер подключений и app_loop
+import websocket_manager
+
 # Получение учетных данных пользователя
 username = "docker"
 password = "docker"
@@ -14,50 +17,44 @@ project_dir = os.getcwd()
 project_dir = project_dir.replace('\\', '\\')
 
 def start_vm(analysis_id, exe_filename, client_ip):
-    logs = ""
-    def log(msg, analysis_id):
-        nonlocal logs
-        logs += msg + "\n"
-        global_log(msg, analysis_id)
-
     try:
-        log(f"Импорт виртуальной машины с новым именем {analysis_id}", analysis_id)
+        global_log(f"Импорт виртуальной машины с новым именем {analysis_id}", analysis_id)
         os.path.join(project_dir, "Hyper", analysis_id, "Virtual Hard Disks")
         import_vm_command = f"""
         $vm = Import-VM -Path "{project_dir}\\Hyper\\ExportedVM\\dock\\Virtual Machines\\38EA00DB-AC8B-473C-8A1E-5C973D39DE75.vmcx" -Copy -GenerateNewId -VirtualMachinePath "{project_dir}\\Hyper\\{analysis_id}" -VhdDestinationPath "{project_dir}\\Hyper\\{analysis_id}\\Virtual Machines";
         Rename-VM -VM $vm -NewName "{analysis_id}";
         """
         subprocess.run(["powershell", "-Command", import_vm_command], check=True)
-        log(f"Виртуальная машина импортирована как {analysis_id}.", analysis_id)
+        global_log(f"Виртуальная машина импортирована как {analysis_id}.", analysis_id)
 
-        log(f"Виртуальная машина {analysis_id} создана.", analysis_id)
+        global_log(f"Виртуальная машина {analysis_id} создана.", analysis_id)
 
         # Включение Guest Service Interface для VM
-        log(f"Включение Guest Service Interface для VM {analysis_id}", analysis_id)
+        global_log(f"Включение Guest Service Interface для VM {analysis_id}", analysis_id)
         enable_guest_service_command = f"""
         Enable-VMIntegrationService -VMName "{analysis_id}" -Name "Интерфейс гостевой службы"
         """
         subprocess.run(["powershell", "-Command", enable_guest_service_command], check=True)
-        log("Guest Service Interface включен для виртуальной машины.", analysis_id)
+        global_log("Guest Service Interface включен для виртуальной машины.", analysis_id)
 
         try:
             # Запуск виртуальной машины
-            log(f"Запуск виртуальной машины {analysis_id}", analysis_id)
+            global_log(f"Запуск виртуальной машины {analysis_id}", analysis_id)
             start_vm_command = f"""
             Start-VM -Name "{analysis_id}"
             """
             subprocess.run(["powershell", "-Command", start_vm_command], check=True)
-            log(f"Виртуальная машина {analysis_id} запущена.", analysis_id)
+            global_log(f"Виртуальная машина {analysis_id} запущена.", analysis_id)
         except Exception as e:
             # Остановка виртуальной машины в случае ошибки
-            log(f"Остановка виртуальной машины {analysis_id}", analysis_id)
+            global_log(f"Остановка виртуальной машины {analysis_id}", analysis_id)
             stop_vm_command = f"""
             Stop-VM -Name "{analysis_id}"
             Remove-VM -Name "{analysis_id}" -Force
             """
             subprocess.run(["powershell", "-Command", stop_vm_command], check=True)
-            log("VM остановлена", analysis_id)
-            log(f"Ошибка при запуске виртуальной машины: {str(e)}", analysis_id)
+            global_log("VM остановлена", analysis_id)
+            global_log(f"Ошибка при запуске виртуальной машины: {str(e)}", analysis_id)
             send_result_to_server(analysis_id, {"status": "error", "message": str(e)}, False)
             return
 
@@ -66,14 +63,14 @@ def start_vm(analysis_id, exe_filename, client_ip):
             raise Exception(f"Виртуальная машина {analysis_id} не смогла запуститься в течение 300 секунд.", analysis_id)
         
         # Копирование файла в VM
-        log(f"Копирование файла в VM {analysis_id} {exe_filename}", analysis_id)
+        global_log(f"Копирование файла в VM {analysis_id} {exe_filename}", analysis_id)
         copy_file_command = f"""
         Copy-VMFile -Name "{analysis_id}" -SourcePath "{project_dir}\\uploads\\{client_ip}\\{exe_filename}" -DestinationPath "C:\\Path\\InsideVM\\{exe_filename}" -CreateFullPath -FileSource Host
         """
         subprocess.run(["powershell", "-Command", copy_file_command], check=True)
-        log(f"Файл {exe_filename} успешно скопирован в виртуальную машину {analysis_id}.", analysis_id)
+        global_log(f"Файл {exe_filename} успешно скопирован в виртуальную машину {analysis_id}.", analysis_id)
 
-        log(f"Настройка и запуск Procmon {analysis_id} {exe_filename}", analysis_id)
+        global_log(f"Настройка и запуск Procmon {analysis_id} {exe_filename}", analysis_id)
         local_procmon_path = f"{project_dir}\\tools\\Procmon.exe"
         
         # Проверка существования файла Procmon на хосте
@@ -119,17 +116,17 @@ def start_vm(analysis_id, exe_filename, client_ip):
                 text=True
             )
             if result.returncode == 0:
-                log(result.stdout.strip(), analysis_id)
+                global_log("Процесс анализа завершен успешно", analysis_id)
             else:
-                log(f"Ошибка при выполнении команды Procmon: {result.stderr.strip()}", analysis_id)
+                global_log(f"Ошибка при выполнении команды Procmon: {result.stderr.strip()}", analysis_id)
                 raise subprocess.CalledProcessError(result.returncode, setup_and_start_procmon_command, output=result.stdout, stderr=result.stderr)
         except subprocess.CalledProcessError as e:
-            log(f"Ошибка при выполнении команды Procmon: {e}", analysis_id)
+            global_log(f"Ошибка при выполнении команды Procmon: {e}", analysis_id)
             # Обновляем историю с ошибкой
             update_history_on_error(analysis_id, str(e))
             raise
 
-        log("ожидаем Procmon", analysis_id)
+        global_log("ожидаем Procmon", analysis_id)
         time.sleep(10)
 
         # Проверка завершения Procmon
@@ -148,18 +145,18 @@ def start_vm(analysis_id, exe_filename, client_ip):
                 text=True
             )
             if result.returncode == 0:
-                log(result.stdout.strip(), analysis_id)
+                global_log(result.stdout.strip(), analysis_id)
             else:
-                log(f"Ошибка при ожидании завершения Procmon: {result.stderr.strip()}", analysis_id)
+                global_log(f"Ошибка при ожидании завершения Procmon: {result.stderr.strip()}", analysis_id)
                 raise subprocess.CalledProcessError(result.returncode, wait_process_command, output=result.stdout, stderr=result.stderr)
         except subprocess.CalledProcessError as e:
-            log(f"Ошибка при ожидании завершения Procmon: {e}", analysis_id)
+            global_log(f"Ошибка при ожидании завершения Procmon: {e}", analysis_id)
             # Обновляем историю с ошибкой
             update_history_on_error(analysis_id, str(e))
             raise
 
         # Копирование логов на хост с механизмом повторных попыток
-        log(f"Копирование логов на хост {analysis_id} {exe_filename}", analysis_id)
+        global_log(f"Копирование логов на хост {analysis_id} {exe_filename}", analysis_id)
         logs_destination = os.path.join(project_dir, "results", analysis_id, "procmon.pml")
         os.makedirs(os.path.dirname(logs_destination), exist_ok=True)
 
@@ -176,66 +173,79 @@ def start_vm(analysis_id, exe_filename, client_ip):
         for attempt in range(1, max_attempts + 1):
             try:
                 subprocess.run(["powershell", "-Command", copy_logs_command], check=True, capture_output=True, text=True)
-                log("Логи Procmon скопированы на хост.", analysis_id)
+                global_log("Логи Procmon скопированы на хост.", analysis_id)
                 break  # Если копирование прошло успешно, выходим из цикла
             except subprocess.CalledProcessError as e:
-                log(f"Попытка {attempt} копирования завершилась неудачно: {e}. Файл может быть ещё заблокирован.", analysis_id)
+                global_log(f"Попытка {attempt} копирования завершилась неудачно: {e}. Файл может быть ещё заблокирован.", analysis_id)
                 if attempt == max_attempts:
-                    log("Превышено число попыток копирования файла. Завершаем процесс.", analysis_id)
+                    global_log("Превышено число попыток копирования файла. Завершаем процесс.", analysis_id)
                     update_history_on_error(analysis_id, str(e))
                     raise
                 else:
                     time.sleep(5)  # Ждем 5 секунд перед следующей попыткой
 
         # Остановка виртуальной машины
-        log(f"Остановка виртуальной машины {analysis_id}", analysis_id)
+        global_log(f"Остановка виртуальной машины {analysis_id}", analysis_id)
         stop_vm_command = f"""
         Stop-VM -Name "{analysis_id}" -Force
         Remove-VM -Name "{analysis_id}" -Force
         """
         try:
             subprocess.run(["powershell", "-Command", stop_vm_command], check=True)
-            log("VM остановлена", analysis_id)
+            global_log("VM остановлена", analysis_id)
         except subprocess.CalledProcessError as stop_e:
-            log(f"Ошибка при остановке VM: {stop_e.output.decode().strip()}", analysis_id)
+            global_log(f"Ошибка при остановке VM: {stop_e.output.decode().strip()}", analysis_id)
 
         # После завершения Procmon пробуем экспортировать лог
         results_dir = os.path.join("results", analysis_id)
         pml_file = os.path.join(results_dir, "procmon.pml")
         export_procmon_logs(analysis_id, pml_file)
     except subprocess.CalledProcessError as e:
-        log(f"Ошибка при выполнении команды PowerShell: {str(e)}", analysis_id)
+        global_log(f"Ошибка при выполнении команды PowerShell: {str(e)}", analysis_id)
         # Остановка виртуальной машины
-        log(f"Остановка виртуальной машины {analysis_id}", analysis_id)
+        global_log(f"Остановка виртуальной машины {analysis_id}", analysis_id)
         stop_vm_command = f"""
         Stop-VM -Name "{analysis_id}" -Force
         Remove-VM -Name "{analysis_id}" -Force
         """
         try:
             subprocess.run(["powershell", "-Command", stop_vm_command], check=True)
-            log("VM остановлена", analysis_id)
+            global_log("VM остановлена", analysis_id)
         except subprocess.CalledProcessError as stop_e:
-            log(f"Ошибка при остановке VM: {stop_e.output.strip()}", analysis_id)
-        log(f"Ошибка при запуске виртуальной машины: {str(e)}", analysis_id)
+            global_log(f"Ошибка при остановке VM: {stop_e.output.strip()}", analysis_id)
+        global_log(f"Ошибка при запуске виртуальной машины: {str(e)}", analysis_id)
         send_result_to_server(analysis_id, {"status": "error", "message": str(e)}, False)
-        update_history_on_error(analysis_id, logs + "\n" + str(e))
-        delete_vm(analysis_id)
+        update_history_on_error(analysis_id, str(e))
     except Exception as e:
-        log(f"Произошла ошибка: {str(e)}", analysis_id)
+        global_log(f"Произошла ошибка: {str(e)}", analysis_id)
         # Остановка виртуальной машины
-        log(f"Остановка виртуальной машины {analysis_id}", analysis_id)
+        global_log(f"Остановка виртуальной машины {analysis_id}", analysis_id)
         stop_vm_command = f"""
         Stop-VM -Name "{analysis_id}" -Force
         Remove-VM -Name "{analysis_id}" -Force
         """
         try:
             subprocess.run(["powershell", "-Command", stop_vm_command], check=True)
-            log("VM остановлена", analysis_id)
+            global_log("VM остановлена", analysis_id)
         except subprocess.CalledProcessError as stop_e:
-            log(f"Ошибка при остановке VM: {stop_e.output.strip()}", analysis_id)
+            global_log(f"Ошибка при остановке VM: {stop_e.output.strip()}", analysis_id)
         send_result_to_server(analysis_id, {"status": "error", "message": str(e)}, False)
-        update_history_on_error(analysis_id, logs + "\n" + str(e))
+        update_history_on_error(analysis_id, str(e))
+    finally:
         delete_vm(analysis_id)
+        try:
+            import asyncio
+            loop = websocket_manager.app_loop
+            if loop is None:
+                # Если event loop отсутствует, попытка создать новый не рекомендуется, логируем ошибку
+                websocket_manager.app_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(websocket_manager.app_loop)
+            else:
+                future = asyncio.run_coroutine_threadsafe(websocket_manager.manager.send_message(analysis_id, "refresh"), loop)
+                # Ожидаем завершения корутина, чтобы не оставлять его неожиданным
+                future.result(timeout=10)
+        except Exception:
+            pass
 
 # Функция ожидания запуска VM
 def wait_for_vm_running(vm_name, analysis_id, timeout=300):
@@ -292,11 +302,11 @@ def export_procmon_logs(analysis_id, pml_file_path):
         os.remove(f"{project_dir}\\results\\{analysis_id}\\procmon.pml")
         # Отправка результатов на сервер
         send_result_to_server(analysis_id, {"status": "completed"}, True)
-        delete_vm(analysis_id)
+        return
     except Exception as e:
         global_log(f"Ошибка при экспорте логов Procmon: {e}", analysis_id)
         send_result_to_server(analysis_id, {"status": "error", "message": str(e)}, False)
-        delete_vm(analysis_id)
+        return
 
 def update_history_on_error(analysis_id, error_message):
     history_file = "history/history.json"
@@ -345,7 +355,7 @@ def delete_vm(analysis_id):
     global_log(f"Виртуальная машина {analysis_id} удалена.", analysis_id)
 
 def send_result_to_server(analysis_id, result_data, success: bool):
-    url = "http://localhost:8080/submit-result/"
+    url = "http://127.0.0.1:8000//submit-result/"
     
     payload = {
         "analysis_id": analysis_id,
@@ -357,19 +367,6 @@ def send_result_to_server(analysis_id, result_data, success: bool):
         response = requests.post(url, data=json.dumps(payload), headers=headers)
         if response.status_code == 200:
             global_log(f"Результаты отправлены на сервер", analysis_id)
-            # Отправляем уведомление через SSE с информацией для редиректа
-            try:
-                from app import subscribers, app_loop
-                import asyncio
-                update_msg = {"analysis_id": analysis_id, "status": result_data.get("status", "completed")}
-                # Если статус завершён, добавляем поле redirect с URL для обновления страницы
-                if result_data.get("status", "completed") == "completed":
-                    update_msg["redirect"] = f"/analysis/{analysis_id}"
-                # Для каждого подписчика отсылаем событие через существующий event loop
-                for q in subscribers:
-                    asyncio.run_coroutine_threadsafe(q.put(update_msg), app_loop)
-            except Exception as se:
-                global_log(f"Ошибка при отправке SSE уведомления: {str(se)}", analysis_id)
         else:
             global_log(f"Ошибка при отправке результатов: {response.status_code}", analysis_id)
     except Exception as e:
@@ -377,5 +374,5 @@ def send_result_to_server(analysis_id, result_data, success: bool):
 
 def global_log(msg, analysis_id):
     results_data = load_results(analysis_id)
-    results_data["docker_output"] += msg + ";   "
+    results_data["docker_output"] += msg + "<br>"
     save_results(results_data, analysis_id)
