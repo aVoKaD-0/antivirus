@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, Request, HTTPException
+from fastapi import FastAPI, UploadFile, File, Request, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -14,10 +14,20 @@ from mashina import start_vm
 import asyncio
 import ijson
 import re
-from sse_starlette.sse import EventSourceResponse
+from contextlib import asynccontextmanager
+import websocket_manager
+import logging
 
-app = FastAPI()
-app_loop = asyncio.get_event_loop()
+file_log = os.path.join("data", "log.log")
+logging.basicConfig(level=logging.DEBUG, filename=file_log)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global websocket_manager
+    websocket_manager.app_loop = asyncio.get_running_loop()
+    yield
+
+app = FastAPI(lifespan=lifespan)
 
 class AnalysisResult(BaseModel):
     analysis_id: str
@@ -47,11 +57,9 @@ templates = Jinja2Templates(directory="templates")
 # Хранилище активных анализов по пользователям
 active_analyses: Dict[str, Dict[str, List[str]]] = {}
 
-# Глобальное хранилище подписчиков SSE
-subscribers = []
-
 @app.get("/", response_class=HTMLResponse)
 async def root(request: Request):
+    global_log(f"connect {request.client.host}")
     # Получаем историю пользователя
     history = load_user_history()
 
@@ -63,11 +71,15 @@ async def root(request: Request):
 @app.get("/analysis/{analysis_id}")
 async def get_analysis_page(request: Request, analysis_id: str):
     try:
+        global_log(f"get_analysis_page {analysis_id}, {request.client.host}")
         history = load_user_history()
         analysis = next((item for item in history if item["analysis_id"] == analysis_id), None)
         if not analysis:
             return RedirectResponse(url="/")
-
+        
+        if websocket_manager.app_loop is None:
+            websocket_manager.app_loop = asyncio.get_running_loop()
+        
         return templates.TemplateResponse(
             "index.html",
             {
@@ -80,13 +92,13 @@ async def get_analysis_page(request: Request, analysis_id: str):
             }
         )
     except Exception as e:
-        print(f"Ошибка при получении страницы анализа: {str(e)}")
         return RedirectResponse(url="/")
 
 @app.delete("/analysis/{analysis_id}")
 async def stop_analysis(analysis_id: str):
     try:
         # Удаляем рабочую директорию
+        global_log(f"stop_analysis {analysis_id}")
         work_dir = os.path.join("data", analysis_id)
         if os.path.exists(work_dir):
             shutil.rmtree(work_dir)
@@ -121,6 +133,7 @@ async def analyze_file(request: Request, file: UploadFile = File(...)):
         # Генерация идентификатора анализа
         run_id = str(uuid.uuid4())
 
+        global_log(f"analyze_file {run_id}, {file.filename}, {client_ip}")
         # Запускаем виртуальную машину асинхронно
         asyncio.create_task(asyncio.to_thread(start_vm, run_id, file.filename, client_ip))
 
@@ -139,14 +152,14 @@ async def analyze_file(request: Request, file: UploadFile = File(...)):
         results = load_user_results(run_id)
         save_user_results(results, run_id)
 
-        print(f"Файл загружен и анализ запущен. ID анализа: {run_id}")
+        global_log(f"Файл загружен и анализ запущен. ID анализа: {run_id}, {request.client.host}")
         
         return JSONResponse({
             "status": "success",
             "analysis_id": run_id
         })
     except Exception as e:
-        print(f"Ошибка при анализе файла: {str(e)}")
+        global_log(f"Ошибка при анализе файла: {str(e)}", run_id, request.client.host)
         raise HTTPException(status_code=500, detail=str(e))
 
 def load_user_history():
@@ -168,6 +181,7 @@ async def get_results(analysis_id: str):
 
 @app.get("/results/{analysis_id}/chunk")
 async def get_results_chunk(analysis_id: str, offset: int = 0, limit: int = 50):
+    global_log(f"get_results_chunk {analysis_id}")
     try:
         # Определяем путь к файлу результатов.
         # Предполагается, что результаты хранятся в файле data/{analysis_id}/results.json
@@ -178,12 +192,6 @@ async def get_results_chunk(analysis_id: str, offset: int = 0, limit: int = 50):
         chunk = []
         total = 0
 
-        # Используем ijson для потокового парсинга ключа "file_activity", который должен быть массивом.
-        # Это означает, что структура JSON должна быть примерно такой:
-        # {
-        #     "file_activity": [ {...}, {...}, ... ],
-        #     "docker_output": "..."
-        # }
         with open(results_file, "r", encoding="utf-8") as f:
             parser = ijson.items(f, "file_activity.item")
             for item in parser:
@@ -207,9 +215,6 @@ def get_result_data(analysis_id: str) -> dict:
     Также возвращается общее количество элементов (поле total) и docker_output.
     """
     results_file = os.path.join("results", analysis_id, "results.json")
-    # print(f"[DEBUG] Ищем файл результатов: {results_file}")
-    # if not os.path.exists(results_file):
-    #      raise ValueError(f"[DEBUG] Результаты не найдены: {results_file}")
 
     preview = []
     total = 0
@@ -220,7 +225,6 @@ def get_result_data(analysis_id: str) -> dict:
              if total < 100:
                  preview.append(item)
              total += 1
-    # print(f"[DEBUG] file_activity: получено {len(preview)} элементов из {total}")
 
     docker_output = ""
     # Если docker_output находится в конце файла, читаем последние 100 КБ
@@ -240,7 +244,6 @@ def get_result_data(analysis_id: str) -> dict:
          "docker_output": docker_output,
          "total": total
     }
-    # print(f"[DEBUG] Отправляем данные")
     return result
     
 # Загружает историю анализов из файла history/history.json.
@@ -291,12 +294,14 @@ def get_client_ip(request: Request):
 async def download_results(analysis_id: str):
     # Определяем путь к файлу результатов (уже исправленное расположение)
     results_file = os.path.join("results", analysis_id, "results.json")
+    global_log(f"download_results {analysis_id}, {results_file}")
     if not os.path.exists(results_file):
         return JSONResponse(status_code=404, content={"detail": "Результаты не найдены"})
     return FileResponse(results_file, media_type='application/json', filename="results.json")
 
 @app.get("/download/{analysis_id}", response_class=HTMLResponse)
 async def download_page(request: Request, analysis_id: str):
+    global_log(f"download_page {analysis_id}, {request.client.host}")
     # URL для скачивания файла
     download_url = f"/results/{analysis_id}/download"
     # Возвращаем простую HTML-страницу, которая через JavaScript перенаправляет пользователя на URL скачивания.
@@ -318,45 +323,45 @@ async def download_page(request: Request, analysis_id: str):
     </html>
     """
 
-@app.get("/sse")
-async def sse_endpoint(request: Request):
-    print("SSE endpoint called")
-    async def event_generator():
-        print("Event generator started")
-        q = asyncio.Queue()
-        subscribers.append(q)
-        try:
-            while True:
-                # Если клиент разорвал соединение, завершаем генерацию
-                if await request.is_disconnected():
-                    print("Client disconnected")
-                    break
-                # Ждем следующее событие
-                data = await q.get()
-                # Формируем SSE-сообщение (обратите внимание на формат)
-                print(f"Sending data: {data}")
-                yield f"data: {json.dumps(data)}\n\n"
-        finally:
-            print("Event generator finished")
-            subscribers.remove(q)
-    return EventSourceResponse(event_generator())
-
 @app.post("/submit-result/")
 async def submit_result(result: AnalysisResult):
     try:
-        # Опционально: обновляем статус анализа в истории,
-        # например, если в result_data передан новый статус.
+        global_log(f"submit_result {result.analysis_id}, {result.result_data}")
         history = load_user_history()
         for entry in history:
             if entry["analysis_id"] == result.analysis_id:
                 entry["status"] = result.result_data.get("status", "completed")
+                entry["docker_output"] = result.result_data.get("message", entry.get("docker_output", ""))
                 break
         save_user_history(history)
-
         return {"status": "completed"}
     except Exception as e:
+        global_log(f"submit_result error {result.analysis_id} {str(e)}, {result.result_data}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# Эндпоинт для WebSocket
+@app.websocket("/ws/{analysis_id}")
+async def websocket_endpoint(websocket: WebSocket, analysis_id: str):
+    await websocket_manager.manager.connect(analysis_id, websocket)
+    try:
+        # Оставляем соединение открытым, можем ожидать сообщения от клиента (если потребуется)
+        global_log(f"connect websocket {analysis_id}, {websocket.client.host}")
+        while True:
+            _ = await websocket.receive_text()
+    except WebSocketDisconnect:
+        global_log(f"disconnect websocket {analysis_id}, {websocket.client.host}")
+        websocket_manager.manager.disconnect(analysis_id, websocket)
+
+def global_log(message):
+    logging.debug(message)
+
 if __name__ == "__main__":
+    import asyncio
+    if websocket_manager.app_loop is None:
+        websocket_manager.app_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(websocket_manager.app_loop)
+        global_log("app_loop установлен внутри __main__")
+    else:
+        global_log("app_loop уже установлен")
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8080)
